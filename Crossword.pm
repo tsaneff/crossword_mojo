@@ -4,13 +4,14 @@ use strict;
 
 package Crossword;
 use utf8;
+use DBI;
 use Carp;
 use warnings;
 use strict;
 
 # Debugging:
 use constant DEBUG                    => 1;
-use constant PRINT_STDOUT             => 0;
+use constant PRINT_STDOUT             => 1;
 use constant LOG_FILE                 => 'crossword_gen.log';
 use Data::Dumper;
 
@@ -19,9 +20,12 @@ use constant BENCHMARK                => 0;
 use Benchmark::Timer;
 
 # Db:
-use constant TXT_DB_MODE              => 1;
-use constant WORDS_TXT_DB_FILE        => 'db/words.dat'; 
-use constant DESCRIPTIONS_TXT_DB_FILE => 'db/descriptions.dat';
+use constant TXT_DB_MODE              => 0;
+use constant WORDS_TXT_DB_FILE        => 'db/BGN.words.dat'; 
+use constant DESCRIPTIONS_TXT_DB_FILE => 'db/BGN.descriptions.dat';
+use constant DB_CONN                  => 'DBI:mysql:crossword_proj';
+use constant DB_USER                  => 'uzer';
+use constant DB_PASS                  => 'pazz';
 
 sub new{
     my $class = shift;
@@ -54,11 +58,30 @@ sub fill{
     }
     
     if ( DEBUG ){
-        open LOG, '>:utf8', LOG_FILE or die $!;
+        open LOG, '>:utf8', LOG_FILE or confess $!;
+    }
+    
+    my ( $dbh, $sth_words, $sth_desc ) = ( '' ) x 3;
+    if ( not TXT_DB_MODE ){
+        
+        # Establishing DB connection:
+        $dbh = DBI->connect( DB_CONN, DB_USER, DB_PASS ) 
+            or confess "Couldn't connect to database: ".DBI->errstr;
+        
+        # MySQL utf8 data retrieving hacks:
+        $dbh->{'mysql_enable_utf8'} = 1;
+        $dbh->do('SET NAMES utf8');
+        
+        # Prepare statements:
+        $sth_words     = $dbh->prepare( 'SELECT id, word FROM words WHERE word_len = ? and word RLIKE ?' )
+            or confess "Couldn't prepare statement: ".$dbh->errstr;
+        
+        $sth_desc      = $dbh->prepare( 'SELECT description FROM descriptions WHERE word_id = ?' )
+            or confess "Couldn't prepare statement: ".$dbh->errstr;
     }
     
     my $grid               = $self->{grid};
-    my $MAX_WORD_LEN       = queryMaxWordLen();
+    my $MAX_WORD_LEN       = queryMaxWordLen($dbh);
     my $duplicateProtector = Crossword::DuplicateProtector->new();
     
     ##################################################
@@ -71,7 +94,9 @@ sub fill{
             offset              => 0,
             word_placement      => 'corner',
             max_word_len        => $MAX_WORD_LEN,
-            duplicate_protector => $duplicateProtector
+            duplicate_protector => $duplicateProtector,
+            sth_words           => $sth_words,
+            sth_desc            => $sth_desc
         }
     );
     
@@ -82,7 +107,9 @@ sub fill{
     $grid->fillWhileEndsExists( 
         { 
             max_word_len        => $MAX_WORD_LEN,
-            duplicate_protector => $duplicateProtector
+            duplicate_protector => $duplicateProtector,
+            sth_words           => $sth_words,
+            sth_desc            => $sth_desc
         }
     );
     
@@ -95,7 +122,9 @@ sub fill{
         $grid->setTracesByX( 
             { 
                 max_word_len        => $MAX_WORD_LEN,
-                duplicate_protector => $duplicateProtector
+                duplicate_protector => $duplicateProtector,
+                sth_words           => $sth_words,
+                sth_desc            => $sth_desc
             }
         );
     }
@@ -111,7 +140,9 @@ sub fill{
                 offset              => 1,
                 word_placement      => 'nextTo',
                 max_word_len        => $MAX_WORD_LEN,
-                duplicate_protector => $duplicateProtector
+                duplicate_protector => $duplicateProtector,
+                sth_words           => $sth_words,
+                sth_desc            => $sth_desc
             }
         );
         
@@ -122,7 +153,9 @@ sub fill{
         $grid->fillWhileEndsExists( 
             { 
                 max_word_len        => $MAX_WORD_LEN,
-                duplicate_protector => $duplicateProtector
+                duplicate_protector => $duplicateProtector,
+                sth_words           => $sth_words,
+                sth_desc            => $sth_desc
             }
         );
         
@@ -146,7 +179,7 @@ sub fill{
     
     $self->{guessList} = $grid->scan4objects(
         { types => ['Crossword::Grid::Guess'], rule => sub{return 1} }
-    ); # IMPL: $self->{guessList} is better 2 B GuessList ref than hash with Guess List coords!
+    ); # IMPL: $self->{guessList} is better 2 B Guess obj's ref than hash with Guess obj's coords!
     
     #############################
     $self->displayTxtGuessListPane(*LOG);
@@ -157,7 +190,7 @@ sub fill{
     }
     
     if ( DEBUG ){
-        close LOG or die $!;
+        close LOG or confess $!;
     }
 }
 
@@ -192,8 +225,9 @@ sub getWord{
     my $Grid = shift;
     my $data = shift;
     
-    Crossword::Toolz::vald_args( 
-        $data, [ qw{ offset sticked_axis_val direction duplicate_protector max_word_len } ]
+    Crossword::Toolz::vald_args( $data,
+        [ qw{ offset sticked_axis_val direction duplicate_protector 
+        max_word_len sth_words sth_desc } ]
     );
     
     $data->{return_type} = 'rand_word';
@@ -205,8 +239,9 @@ sub getMatchedData{
     my $Grid = shift;
     my $data = shift;
     
-    Crossword::Toolz::vald_args( 
-        $data, [ qw{ offset sticked_axis_val direction duplicate_protector max_word_len return_type } ]
+    Crossword::Toolz::vald_args( $data,
+        [ qw{ offset sticked_axis_val direction duplicate_protector 
+        max_word_len return_type sth_words sth_desc } ]
     );
     
     my $PUZZLE_H = scalar @{$Grid};
@@ -220,26 +255,34 @@ sub getMatchedData{
     do{
 	    $words = queryWords( $Grid->getWordRegex(
 			{
-				offset => $data->{offset},
+				offset           => $data->{offset},
 				sticked_axis_val => $data->{sticked_axis_val},
-				direction => $data->{direction},
-				limit => $limit
-			})
+				direction        => $data->{direction},
+				limit            => $limit
+			}), $data->{sth_words}
 	    );
 	    @{$words} = grep { not $data->{duplicate_protector}->isUsed($_->{word}) } @{$words};
 	    --$limit;
 	    
 	    if ( PRINT_STDOUT ){
-            print "DIRECTION: $data->{direction}; sticked_axis: $data->{sticked_axis_val}; moving_ax_offset: $data->{offset}; LIMIT: $limit\n";
+            print 'DIRECTION: '       . $data->{direction} .
+                '; sticked_axis: '    . $data->{sticked_axis_val}.
+                '; moving_ax_offset: '. $data->{offset}.
+                "; LIMIT: $limit\n";
         }
-        logger (sub{ print LOG "DIRECTION: $data->{direction}; sticked_axis: $data->{sticked_axis_val}; moving_ax_offset: $data->{offset}; LIMIT: $limit\n"; });
+        logger (sub{ 
+            print LOG 'DIRECTION: '   . $data->{direction} .
+                '; sticked_axis: '    . $data->{sticked_axis_val}.
+                '; moving_ax_offset: '. $data->{offset}.
+                "; LIMIT: $limit\n";
+        });
     } until (@{$words} or $limit == 1);
     
     if ( $data->{return_type} eq 'rand_word' ){
         my $word = {};
         if ( @{$words} ){
             $word = $words->[ rand $#$words ];
-            $word->{desc} = queryWordDesc($word->{id});
+            $word->{desc} = queryWordDesc( $word->{id}, $data->{sth_desc} );
         } 
         return $word;
     } elsif ( $data->{return_type} eq 'all_words' ) {
@@ -355,7 +398,7 @@ sub placeBorderWords{
     my $data = shift;
     
     Crossword::Toolz::vald_args( 
-        $data, [ qw{ init_step offset word_placement duplicate_protector max_word_len } ]
+        $data, [ qw{ init_step offset word_placement duplicate_protector max_word_len sth_words sth_desc } ]
     );
     
     my $PUZZLE_W           = scalar @{$self->[0]};
@@ -364,6 +407,8 @@ sub placeBorderWords{
     my $duplicateProtector = $data->{duplicate_protector};
     my $offset             = $data->{offset};
     my $word_placement     = $data->{word_placement};
+    my $sth_words          = $data->{sth_words};
+    my $sth_desc           = $data->{sth_desc};
     
     Crossword::logger (sub{ print Crossword::LOG "placeBorderWords(): Try to place grid outer objects...\n"; });
     
@@ -376,7 +421,9 @@ sub placeBorderWords{
                 sticked_axis_val    => $x,
                 direction           => 'y',
                 duplicate_protector => $duplicateProtector,
-                max_word_len        => $MAX_WORD_LEN
+                max_word_len        => $MAX_WORD_LEN,
+                sth_words           => $sth_words,
+                sth_desc            => $sth_desc
             };
             $args->{word_data}      = Crossword::getWord( $self, $args );
             $args->{word_placement} = $word_placement;
@@ -390,7 +437,9 @@ sub placeBorderWords{
                 sticked_axis_val    => $y,
                 direction           => 'x',
                 duplicate_protector => $duplicateProtector,
-                max_word_len        => $MAX_WORD_LEN
+                max_word_len        => $MAX_WORD_LEN,
+                sth_words           => $sth_words,
+                sth_desc            => $sth_desc
             };
             $args->{word_data}      = Crossword::getWord( $self, $args );
             $args->{word_placement} = $word_placement;
@@ -408,13 +457,15 @@ sub fillWhileEndsExists{
     my $data = shift;
     
     Crossword::Toolz::vald_args( 
-        $data, [ qw{ duplicate_protector max_word_len } ]
+        $data, [ qw{ duplicate_protector max_word_len sth_words sth_desc } ]
     );
     
     my $PUZZLE_W           = scalar @{$self->[0]};
     my $PUZZLE_H           = scalar @{$self};
     my $MAX_WORD_LEN       = $data->{max_word_len};
     my $duplicateProtector = $data->{duplicate_protector};
+    my $sth_words          = $data->{sth_words};
+    my $sth_desc           = $data->{sth_desc};
     
     Crossword::logger (sub{ print Crossword::LOG "fillWhileEndsExists(): Try to fill not one-word-only lines...\n"; });
     
@@ -437,7 +488,9 @@ sub fillWhileEndsExists{
                     sticked_axis_val    => $end_coords->{y},
                     direction           => 'x',
                     duplicate_protector => $duplicateProtector,
-                    max_word_len        => $MAX_WORD_LEN
+                    max_word_len        => $MAX_WORD_LEN,
+                    sth_words           => $sth_words,
+                    sth_desc            => $sth_desc
                 };
                 $args->{word_data}      = Crossword::getWord($self,$args);
                 $args->{word_placement} = 'nextTo';
@@ -462,7 +515,9 @@ sub fillWhileEndsExists{
                     sticked_axis_val    => $end_coords->{x},
                     direction           => 'y',
                     duplicate_protector => $duplicateProtector,
-                    max_word_len        => $MAX_WORD_LEN
+                    max_word_len        => $MAX_WORD_LEN,
+                    sth_words           => $sth_words,
+                    sth_desc            => $sth_desc
                 };
                 $args->{word_data}      = Crossword::getWord($self,$args);
                 $args->{word_placement} = 'nextTo';
@@ -478,12 +533,14 @@ sub setTracesByX{
     my $data = shift;
     
     Crossword::Toolz::vald_args( 
-        $data, [ qw{ duplicate_protector max_word_len } ]
+        $data, [ qw{ duplicate_protector max_word_len sth_words sth_desc } ]
     );
     
     my $PUZZLE_H           = scalar @{$self};
     my $MAX_WORD_LEN       = $data->{max_word_len};
     my $duplicateProtector = $data->{duplicate_protector};
+    my $sth_words          = $data->{sth_words};
+    my $sth_desc           = $data->{sth_desc};
     
     # SET TRACES BY X AXIS:
     for (my $y = 2; $y < $PUZZLE_H; $y+=2){
@@ -493,7 +550,9 @@ sub setTracesByX{
             direction           => 'x',
             duplicate_protector => $duplicateProtector,
             max_word_len        => $MAX_WORD_LEN,
-            return_type         => 'all_words'
+            return_type         => 'all_words',
+            sth_words           => $sth_words,
+            sth_desc            => $sth_desc 
         };
         $args->{word_data}      = Crossword::getMatchedData( $self, $args );
         $args->{word_placement} = 'nextTo';
@@ -587,7 +646,10 @@ sub setTraces{
 
 	if ( defined $data->{word_data} ){
         foreach my $word ( @{$data->{word_data}} ){
-            Crossword::logger (sub{ print Crossword::LOG "Trace 2 B placed @ x=",$woX,", y=",$woY,": ", $word->{word},"\n"; });
+            Crossword::logger (sub{ 
+                print Crossword::LOG "Trace 2 B placed @ x=", $woX,
+                    ", y=", $woY, ": ", $word->{word}, "\n";
+            });
             $Grid->placeTrace(
                 {
                     x => $woX, y => $woY, direction => $data->{direction}, 
@@ -769,7 +831,7 @@ sub displayTxtGrid{
         for (my $x=0; $x < $PUZZLE_W; ++$x){
 
             # Detailed print: printf $handler "% 3.3s", $Grid->[$y][$x]->getData();
-            if ($Grid->[$y][$x]->getData() eq '\w'){
+            if ($Grid->[$y][$x]->getData() eq '\w' or $Grid->[$y][$x]->getData() eq '..'){
                 print $handler '* ';
             } elsif (ref $Grid->[$y][$x] eq 'Crossword::Grid::Filler'){
                 print $handler '~ ';
@@ -801,11 +863,15 @@ package Crossword::Grid::Filler;
 # "Crossword::Grid::Filler" will be used in order to mark Crossword's areas where no letter is placed!
 use warnings;
 use strict;
+use constant TXT_DB_MODE => &Crossword::TXT_DB_MODE;
 
 sub new{
     my $class = $_[0];
-
-    my $self = { '\w' => 1 };
+    
+    my $match_all = ( TXT_DB_MODE ) ? '\w' : '..'; # hack: As MySQL regex op's are byte dependant, ...
+    # ... because of 2 byte length of UTF-8, '.' op is applied 2 times!
+   
+    my $self = { $match_all => 1 }; 
     bless $self, $class;
     return $self;
 }
@@ -816,8 +882,9 @@ sub updateRegex{
     
     Crossword::logger (sub{ print Crossword::LOG "DEBUG: updateRegex() letter = ",$letter,"\n"; });
     
-    if ( defined $self->{'\w'} ){
-        delete $self->{'\w'};
+    my $match_all = ( TXT_DB_MODE ) ? '\w' : '..';
+    if ( defined $self->{$match_all} ){
+        delete $self->{$match_all};
     }
     $self->{$letter} = 1;
 }
@@ -828,7 +895,8 @@ sub getData{
     if (scalar keys %{$self} == 1){
         return (keys %{$self})[0];
     } else {
-        return join '', '[', keys %{$self}, ']';
+        my ( $grop_l, $delim, $grop_r ) = ( TXT_DB_MODE ) ? ( '[' , '' , ']' ) : ( '(' , '|' , ')' );
+        return $grop_l. ( join $delim, keys %{$self} ). $grop_r;
     }
 }
 
@@ -941,7 +1009,9 @@ sub getData{
 }
 
 package Crossword::DB::Txt;
+# NB: NOT Object-Oriented package!
 use utf8;
+use Carp;
 use warnings;
 use strict;
 
@@ -949,23 +1019,23 @@ use constant WORDS_TXT_DB_FILE        => &Crossword::WORDS_TXT_DB_FILE;
 use constant DESCRIPTIONS_TXT_DB_FILE => &Crossword::DESCRIPTIONS_TXT_DB_FILE;
 
 sub queryMaxWordLen{
-    open WORD_DATA, '<:utf8', WORDS_TXT_DB_FILE or die $!;
+    open WORD_DATA, '<:utf8', WORDS_TXT_DB_FILE or confess $!;
     $_ = <WORD_DATA>; # Only 1 line is needed, because txt word file is sorted with the longest on top.
     my $len = $1 if (/^\d+#(\d+)#\w+$/);
-    close WORD_DATA or die $!;
+    close WORD_DATA or confess $!;
     return $len;
 }
 
 sub queryWords{
     my $regex = $_[0]->{regex};
     my $len   = $_[0]->{len};
-
+    
     Crossword::logger ( sub{print Crossword::LOG "Crossword::DB::Txt::queryWords(): Tested Regex: [$regex]\n";});
 
     my $matched_data; # will serve as ref to array of words.
     my $count = 0;
 
-    open WORD_DATA, '<:utf8', WORDS_TXT_DB_FILE or die $!;
+    open WORD_DATA, '<:utf8', WORDS_TXT_DB_FILE or confess $!;
     while (<WORD_DATA>){
         next unless (/^\d+#$len#/);
         if (/^(\d+)#$len#($regex)$/){ # Line format: 17452#7#example
@@ -974,7 +1044,7 @@ sub queryWords{
             ++$count;
         }
     }
-    close WORD_DATA or die $!;
+    close WORD_DATA or confess $!;
     return $matched_data;
 }
 
@@ -984,7 +1054,7 @@ sub queryWordDesc{
     Crossword::logger ( sub{print Crossword::LOG "Getting desc for word id: [$word_id]...\n";});
     
     my $desc;
-    open DESC_DATA, '<:utf8', DESCRIPTIONS_TXT_DB_FILE or die $!;
+    open DESC_DATA, '<:utf8', DESCRIPTIONS_TXT_DB_FILE or confess $!;
     while (<DESC_DATA>){
         next unless (/^$word_id#/);
         if (/^$word_id#(.*)$/){ # Line format: 17452#Word description...
@@ -992,12 +1062,66 @@ sub queryWordDesc{
             last;
         }
     }
-    close DESC_DATA or die $!;
+    close DESC_DATA or confess $!;
     Crossword::logger ( sub{print Crossword::LOG "Returned desc for word id [$word_id]: [$desc]\n";});
     return $desc;
 }
 
-package Crossword::Toolz; # NB: NOT Object-Oriented package!
+package Crossword::DB::Rel;
+# NB: NOT Object-Oriented package!
+use utf8;
+use DBI;
+use Carp;
+use warnings;
+use strict;
+
+sub queryMaxWordLen{
+    my $dbh     = shift;
+    
+    my $ary_ref = $dbh->selectrow_arrayref( 'SELECT max(word_len) FROM words' ) or 
+        confess "Couldn't prepare, execute and fetchrow_arrayref for statement: " . $dbh->errstr;
+    
+    return $ary_ref->[0];
+}
+
+sub queryWords{
+    my $data = shift;
+    my $sth  = shift;
+    
+    $data->{sth} = $sth;
+    Crossword::Toolz::vald_args( $data, [ qw{ regex len sth } ] );
+    
+    my $regex = $data->{regex};
+    my $tbl_ary_ref;
+    
+    if ( $regex ne '' ){
+        Crossword::logger ( sub{print Crossword::LOG
+            "Crossword::DB::Rel::queryWords(): Tested Regex: [$regex]\n";});
+
+        $sth->execute( $data->{len}, $regex ) 
+            or confess "Couldn't execute statement: "                 . $sth->errstr;
+        
+        $tbl_ary_ref = $sth->fetchall_arrayref({})
+            or confess "Couldn't 'fetchall_arrayref({})' statement: " . $sth->errstr;
+    }
+    return $tbl_ary_ref;
+}
+
+sub queryWordDesc{
+    my $id  = shift;
+    my $sth = shift;
+    
+    $sth->execute($id)
+        or confess "Couldn't execute statement: "             . $sth->errstr;
+    
+    my $ary_ref = $sth->fetchrow_arrayref()
+        or confess "Couldn't 'fetchrow_arrayref' statement: " . $sth->errstr;
+    
+    return $ary_ref->[0];
+}
+
+package Crossword::Toolz;
+# NB: NOT Object-Oriented package!
 use Carp;
 
 sub vald_args{
