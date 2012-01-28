@@ -1,1 +1,2 @@
-Mojo Jojo v0.0.1
+Crossword Mojo is Simple OOP Perl crossword generator with UTF-8 support
+and word information loading from MySQL database or text source.
