@@ -19,6 +19,14 @@ sub startup {
     });
 }
 
+# # # Testing # # #
+get '/test' => sub {
+    my $self = shift;
+    $self->stash( width => 99, num_of_cells => 9801 );
+    $self->render( template => 'test' );
+};
+# # # # # # # # # #
+
 # Render the 'index' page:
 get '/' => sub {
     my $self = shift;
@@ -76,6 +84,38 @@ app->start('cgi');
 # HTML Templates:
 __DATA__
 
+@@ test.html.ep
+% layout 'default';
+<div class="wrapper">
+    %= form_for 'test2' => (method => 'post') => begin
+        % my $div_flag = 0;
+        % for ( my $i = 0; $i < $num_of_cells + $width; ++$i ){
+        %    if ( $i % $width == 0 ){
+                % if ( $i != 0){
+                    &nbsp;&nbsp;</div><div class="crosword_row">
+                    <%= text_field 'h_num_'.$i, class => 'header_1st_col',
+                        readonly => 'readonly', value => int $i / $width # header 1st col cell
+                    %>
+                % } else {
+                    <div class="crosword_row">
+                    <%= text_field 'h_num_'.$i, class => 'header_1st_col',
+                        readonly => 'readonly' # header 1st cell
+                    %>
+                % }
+           % }
+           % if ( $i < $width ){ # Setting values for header row ( value range 0 - 9 ):
+                <%= text_field 'header_'.$i, class => 'header_n_col',
+                    value => $i+1 # header row
+                %>
+           % } else {
+                %= text_field $i - $width, maxlength => 1, class => 'cell'
+           % }
+        % }
+        </div>
+        <span /><div><%= submit_button 'Check!', class => 'crossword_check' %></div>
+    % end
+</div>
+
 @@ index.html.ep
 % layout 'default';
 
@@ -85,8 +125,8 @@ __DATA__
 
 %= form_for $home.'crossword_gen' => (method => 'post') => begin
     <div><%= select_field algorithm => $algorithms %></div><br />
-    <div>Height: <%= text_field 'crossword_h', size => 2 %></div><br />
-    <div>Width:  <%= text_field 'crossword_w', size => 2 %></div><br />
+    <div>Height: <%= text_field 'crossword_h', size => 2, maxlength => 2 %></div><br />
+    <div>Width:  <%= text_field 'crossword_w', size => 2, maxlength => 2 %></div><br />
     <%= submit_button 'Generate!' %>
 % end
 
@@ -94,7 +134,11 @@ __DATA__
 @@ layouts/default.html.ep
 <!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
 <html>
-  <head><title>Crossword Mojo v0.0.1</title></head>
+  <head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+    <title>Crossword Mojo v0.0.1</title>
+    <link rel="stylesheet" type="text/css" href="public/content.css" />
+  </head>
   <body>
     <%= content %>
   </body>
