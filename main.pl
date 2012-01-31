@@ -19,13 +19,19 @@ sub startup {
     });
 }
 
-# # # Testing # # #
-get '/test' => sub {
+# # # Testing Crossword UI gen. # # #
+get '/crossword_ui' => sub {
     my $self = shift;
-    $self->stash( width => 99, num_of_cells => 9801 );
+    $self->stash( home => HOMEPAGE, width => 15, num_of_cells => 225 );
     $self->render( template => 'test' );
 };
-# # # # # # # # # #
+
+post '/ui_handler' => sub {
+    my $self = shift;
+    my @params = $self->req->param('filled_array');
+    $self->render( text => join ',', @params );
+};
+# # # # # # # # # # # # # # # # # # #
 
 # Render the 'index' page:
 get '/' => sub {
@@ -84,37 +90,38 @@ app->start('cgi');
 # HTML Templates:
 __DATA__
 
-@@ test.html.ep
+
+@@ crossword_ui.html.ep
 % layout 'default';
 <div class="wrapper">
-    %= form_for 'test2' => (method => 'post') => begin
-        % my $div_flag = 0;
+    %= form_for $home.'ui_handler' => (method => 'post') => begin
         % for ( my $i = 0; $i < $num_of_cells + $width; ++$i ){
-        %    if ( $i % $width == 0 ){
+           % if ( $i % $width == 0 ){
                 % if ( $i != 0){
                     &nbsp;&nbsp;</div><div class="crosword_row">
-                    <%= text_field 'h_num_'.$i, class => 'header_1st_col',
-                        readonly => 'readonly', value => int $i / $width # header 1st col cell
+                    <%= text_field 'header', class => 'header_1st_col',
+                            disabled => 'disabled', value => int $i / $width # header 1st col cell
                     %>
                 % } else {
                     <div class="crosword_row">
-                    <%= text_field 'h_num_'.$i, class => 'header_1st_col',
-                        readonly => 'readonly' # header 1st cell
+                    <%= text_field 'header', class => 'header_1st_col',
+                            disabled => 'disabled' # header 1st cell
                     %>
                 % }
            % }
            % if ( $i < $width ){ # Setting values for header row ( value range 0 - 9 ):
-                <%= text_field 'header_'.$i, class => 'header_n_col',
-                    value => $i+1 # header row
+                <%= text_field 'header', class => 'header_n_col',
+                        disabled => 'disabled', value => $i+1 # header row
                 %>
            % } else {
-                %= text_field $i - $width, maxlength => 1, class => 'cell'
+                %= text_field 'filled_array', maxlength => 1, class => 'cell'
            % }
         % }
         </div>
         <span /><div><%= submit_button 'Check!', class => 'crossword_check' %></div>
     % end
 </div>
+
 
 @@ index.html.ep
 % layout 'default';
