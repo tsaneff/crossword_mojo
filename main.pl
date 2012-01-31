@@ -19,7 +19,7 @@ sub startup {
     });
 }
 
-# # # Testing Crossword UI gen. # # #
+# # # Testing Crossword UI gen. # # # #
 get '/crossword_ui' => sub {
     my $self = shift;
     $self->stash( home => HOMEPAGE, width => 15, num_of_cells => 225 );
@@ -31,7 +31,7 @@ post '/ui_handler' => sub {
     my @params = $self->req->param('filled_array');
     $self->render( text => join ',', @params );
 };
-# # # # # # # # # # # # # # # # # # #
+# # # # # # # # # # # # # # # # # # # #
 
 # Render the 'index' page:
 get '/' => sub {
