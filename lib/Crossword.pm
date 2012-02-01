@@ -1,4 +1,4 @@
-package Crossword;
+﻿package Crossword;
 use utf8;
 use DBI;
 use Carp;
@@ -174,10 +174,8 @@ sub fill{
     #############################
     # FILL GUESSLIST            #
     #############################
-    
-    $self->{guessList} = $grid->scan4objects(
-        { types => ['Crossword::Grid::Guess'], rule => sub{return 1} }
-    ); # IMPL: $self->{guessList} is better 2 B Guess obj's ref than hash with Guess obj's coords!
+
+    $self->{guessList} = $grid->getGuesses();
     
     #############################
     $self->displayTxtGuessListPane(*LOG);
@@ -204,13 +202,9 @@ sub displayTxtGuessListPane{
     my $self    = shift;
     my $handler = shift;
     
-    my $grid            = $self->getGrid();
-    my $guessListCoords = $self->getGuessList();
-    
+    my $guesses = $self->getGuessList();
     my $seq = 0;
-    my $guess;
-    foreach (@{$guessListCoords}){
-        $guess = $grid->[$_->{y}][$_->{x}];
+    foreach my $guess (@{$guesses}){
         $seq++;
         print $handler "Guess N$seq:\n";
         foreach my $arrow (sort {$a cmp $b} keys %{$guess->{arrows}}){
@@ -251,18 +245,18 @@ sub getMatchedData{
 
     my $words;
     do{
-	    $words = queryWords( $Grid->getWordRegex(
-			{
-				offset           => $data->{offset},
-				sticked_axis_val => $data->{sticked_axis_val},
-				direction        => $data->{direction},
-				limit            => $limit
-			}), $data->{sth_words}
-	    );
-	    @{$words} = grep { not $data->{duplicate_protector}->isUsed($_->{word}) } @{$words};
-	    --$limit;
-	    
-	    if ( PRINT_STDOUT ){
+        $words = queryWords( $Grid->getWordRegex(
+            {
+                offset           => $data->{offset},
+                sticked_axis_val => $data->{sticked_axis_val},
+                direction        => $data->{direction},
+                limit            => $limit
+            }), $data->{sth_words}
+        );
+        @{$words} = grep { not $data->{duplicate_protector}->isUsed($_->{word}) } @{$words};
+        --$limit;
+        
+        if ( PRINT_STDOUT ){
             print 'DIRECTION: '       . $data->{direction} .
                 '; sticked_axis: '    . $data->{sticked_axis_val}.
                 '; moving_ax_offset: '. $data->{offset}.
@@ -559,7 +553,7 @@ sub setTracesByX{
 }
 
 sub placeObjects{
-	my $Grid = $_[0]; # get "self" (object) reference!
+    my $Grid = $_[0]; # get "self" (object) reference!
     my $data = $_[1];
     
     Crossword::Toolz::vald_args( 
@@ -572,22 +566,22 @@ sub placeObjects{
     
     my ($guX, $guY, $woX, $woY, $grX, $grY);
     if    ($data->{word_placement} eq 'corner'){
-		($w_sticked_offset, $w_moving_offset) = (-1, 0); ($grX, $grY) = (\$woX, \$woY) }
-	elsif ($data->{word_placement} eq 'nextTo'){ 
-		($w_sticked_offset, $w_moving_offset) = ( 0,-1); ($grX, $grY) = (\$guX, \$guY) }
-	else {
-		confess "Grid->placeObjects() called with wrong 'word_placement' argument value".$data->{word_placement};
-	}
+        ($w_sticked_offset, $w_moving_offset) = (-1, 0); ($grX, $grY) = (\$woX, \$woY) }
+    elsif ($data->{word_placement} eq 'nextTo'){ 
+        ($w_sticked_offset, $w_moving_offset) = ( 0,-1); ($grX, $grY) = (\$guX, \$guY) }
+    else {
+        confess "Grid->placeObjects() called with wrong 'word_placement' argument value".$data->{word_placement};
+    }
     
     if ($data->{direction} eq 'x'){
         ($woX, $woY) = ($moving_ax,                      $sticked_ax                    );
-		($guX, $guY) = ($moving_ax  + $w_moving_offset,  $sticked_ax + $w_sticked_offset);
+        ($guX, $guY) = ($moving_ax  + $w_moving_offset,  $sticked_ax + $w_sticked_offset);
     } else {
         ($woX, $woY) = ($sticked_ax,                     $moving_ax                   );
-		($guX, $guY) = ($sticked_ax + $w_sticked_offset, $moving_ax + $w_moving_offset);
+        ($guX, $guY) = ($sticked_ax + $w_sticked_offset, $moving_ax + $w_moving_offset);
     }
 
-	if ( defined $data->{word_data}->{word} ){
+    if ( defined $data->{word_data}->{word} ){
         Crossword::logger (sub{ print Crossword::LOG "Word 2 B placed @ x=",$woX,", y=",$woY,": ", $data->{word_data}->{word},"\n"; });
         $data->{duplicate_protector}->save( $data->{word_data}->{word} );
         $Grid->placeGuess( 
@@ -603,18 +597,18 @@ sub placeObjects{
             }
         );
         Crossword::logger (sub{ $Grid->displayTxtGrid(*Crossword::LOG) });
-	} else {
-	    if ( ref $Grid->[$$grY][$$grX] ne 'Crossword::Grid::Guess'){
+    } else {
+        if ( ref $Grid->[$$grY][$$grX] ne 'Crossword::Grid::Guess'){
             $Grid->placeGrave( { x => $$grX, y => $$grY } );
              Crossword::logger (sub{ print Crossword::LOG "Grave placed @ x => ",$$grX," y =>", $$grY,"\n"; });
         } else {
             Crossword::logger (sub{ print Crossword::LOG "Grave banned @ x=",$$grX,", y=",$$grY,"\n"; });
         }
-	}
+    }
 }
 
 sub setTraces{
-	my $Grid = $_[0]; # get "self" (object) reference!
+    my $Grid = $_[0]; # get "self" (object) reference!
     my $data = $_[1];
     
     Crossword::Toolz::vald_args( 
@@ -627,22 +621,22 @@ sub setTraces{
     
     my ($guX, $guY, $woX, $woY, $grX, $grY);
     if    ($data->{word_placement} eq 'corner'){
-		($w_sticked_offset, $w_moving_offset) = (-1, 0); ($grX, $grY) = (\$woX, \$woY) }
-	elsif ($data->{word_placement} eq 'nextTo'){ 
-		($w_sticked_offset, $w_moving_offset) = ( 0,-1); ($grX, $grY) = (\$guX, \$guY) }
-	else {
-		confess "Grid->placeObjects() called with wrong 'word_placement' argument value [".$data->{word_placement}.'] ';
-	}
+        ($w_sticked_offset, $w_moving_offset) = (-1, 0); ($grX, $grY) = (\$woX, \$woY) }
+    elsif ($data->{word_placement} eq 'nextTo'){ 
+        ($w_sticked_offset, $w_moving_offset) = ( 0,-1); ($grX, $grY) = (\$guX, \$guY) }
+    else {
+        confess "Grid->placeObjects() called with wrong 'word_placement' argument value [".$data->{word_placement}.'] ';
+    }
     
     if ($data->{direction} eq 'x'){
         ($woX, $woY) = ($moving_ax,                      $sticked_ax                    );
-		($guX, $guY) = ($moving_ax  + $w_moving_offset,  $sticked_ax + $w_sticked_offset);
+        ($guX, $guY) = ($moving_ax  + $w_moving_offset,  $sticked_ax + $w_sticked_offset);
     } else {
         ($woX, $woY) = ($sticked_ax,                     $moving_ax                   );
-		($guX, $guY) = ($sticked_ax + $w_sticked_offset, $moving_ax + $w_moving_offset);
+        ($guX, $guY) = ($sticked_ax + $w_sticked_offset, $moving_ax + $w_moving_offset);
     }
 
-	if ( defined $data->{word_data} ){
+    if ( defined $data->{word_data} ){
         foreach my $word ( @{$data->{word_data}} ){
             Crossword::logger (sub{ 
                 print Crossword::LOG "Trace 2 B placed @ x=", $woX,
@@ -656,7 +650,7 @@ sub setTraces{
             );
         }
         Crossword::logger (sub{ $Grid->displayTxtGrid(*Crossword::LOG) });
-	}
+    }
 }
 
 sub placeTrace{
@@ -781,41 +775,18 @@ sub scan4ends{
     my $Grid      = $_[0]; # get "self" (object) reference!
     my $direction = $_[1]; # Allows only 'x' or only 'y' or both type of Ends 2 B returned!
     
-    return $Grid->scan4objects(
-        {
-            types => [ 'Crossword::Grid::End' ],
-            rule => sub{
-                my $Grid = shift;
-                my $y    = shift;
-                my $x    = shift;
-                return $Grid->[$y][$x]->getDirection() =~ /$direction/;
-            }
-        }
-    );
-}
-
-sub scan4objects{ # IMPL: if not used for other objects than Ends and Guess, this f() needs 2 B deprecated!
-    my $Grid = shift; # get "self" (object) reference!
-    my $data = shift;
-    
-    Crossword::Toolz::vald_args( $data, [ qw{types rule} ] );
-    
-    my $types    = $data->{types};
-    
     my $PUZZLE_H = scalar @{$Grid};
     my $PUZZLE_W = scalar @{$Grid->[0]};
     
-    my $obj_coords = [];
+    my $end_coords = [];
     for (my $y=0; $y < $PUZZLE_H; ++$y){
         for (my $x=0; $x < $PUZZLE_W; ++$x){
-            foreach my $type (@{$types}){
-                if (ref $Grid->[$y][$x] eq $type and &{$data->{rule}}($Grid, $y, $x)){
-                    push @{$obj_coords}, { y => $y, x => $x };
-                }
-            }
+            push @{$end_coords}, { y => $y, x => $x }
+                if ref $Grid->[$y][$x] eq 'Crossword::Grid::End'
+                and    $Grid->[$y][$x]->getDirection() =~ /$direction/;
         }
     }
-    return $obj_coords;
+    return $end_coords;
 }
 
 sub displayTxtGrid{
@@ -839,6 +810,37 @@ sub displayTxtGrid{
         }
         print $handler "\n";
     }
+}
+
+sub getAsFlatArrayRef{
+    my $Grid    = $_[0]; # get "self" (object) reference!
+   
+    my $PUZZLE_H = scalar @{$Grid};
+    my $PUZZLE_W = scalar @{$Grid->[0]};
+    
+    my $cell_data = [];
+    for (my $y=0; $y < $PUZZLE_H; ++$y){
+        for (my $x=0; $x < $PUZZLE_W; ++$x){
+            push @{$cell_data}, $Grid->[$y][$x]->getData();
+        }
+    }
+    return $cell_data;
+}
+
+sub getGuesses{
+    my $Grid    = $_[0]; # get "self" (object) reference!
+    
+    my $PUZZLE_H = scalar @{$Grid};
+    my $PUZZLE_W = scalar @{$Grid->[0]};
+    
+    my $guessList = [];
+    for (my $y=0; $y < $PUZZLE_H; ++$y){
+        for (my $x=0; $x < $PUZZLE_W; ++$x){
+            push @{$guessList}, $Grid->[$y][$x] 
+                if ref $Grid->[$y][$x] eq 'Crossword::Grid::Guess';
+        }
+    }
+    return $guessList;
 }
 
 sub placeDaGraves{
@@ -1167,7 +1169,7 @@ presented:
 
 =head1 TO DO
 
-Word placing algorithms must be updated with huge intelligence!
+Word placing algorithms must be enlighten with huge intelligence!
 
 =head1 AUTHOR
 
