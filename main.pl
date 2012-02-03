@@ -9,6 +9,7 @@ use Guess2Web;
 
 use constant HOMEPAGE             => 'http://input.your.server.ip.n:port/';
 use constant CROSSWORD_ALGORITHMS => qw( FishNet ChuckNorris TraceFull );
+use constant WRONG_CELL_BKGCOLOR  => '#FF0000'; # red
 
 # Hide 'cgi-bin' directory:
 sub startup {
@@ -20,24 +21,10 @@ sub startup {
     });
 }
 
-# # # Testing Crossword UI gen. # # #
-get '/crossword_ui' => sub {
-    my $self = shift;
-    $self->stash( home => HOMEPAGE, width => 15, num_of_cells => 225 );
-    $self->render( template => 'test' );
-};
-
-post '/ui_handler' => sub {
-    my $self = shift;
-    my @params = $self->req->param('filled_array');
-    $self->render( text => join ',', @params );
-};
-# # # # # # # # # # # # # # # # # # #
-
 # Render the 'index' page:
 get '/' => sub {
     my $self = shift;
-
+    
     $self->stash( home => HOMEPAGE, algorithms => [CROSSWORD_ALGORITHMS] ); # passing value to the template.
     $self->render( template => 'index' );
 };
@@ -60,31 +47,96 @@ post '/crossword_gen' => sub {
         helper crossword => sub { return $crossword };
         $self->crossword->fill( { algorithm => $alg } );
         
-        # # # DEBUGGING: Display generated crossword:
-        # my $grid_data = '<pre>';
-        # my $grid = $self->crossword->{grid};
-        # for (my $y=0; $y < $height; ++$y){
-            # for (my $x=0; $x < $width; ++$x){
-                # $grid_data .= $grid->[$y][$x]->getData().' ';
-            # }
-            # $grid_data .= "\n";
-        # }
-        # $grid_data .= "</pre>";
-        
         my $g2w = Guess2Web->new();
         my $cw_control  = $self->crossword->getGrid->getAsFlatArrayRef;
-        my $cw_colormap = $g2w->conv_guess2colorseq($cw_control); # NB: Guess objects ...
-        # ... data ('#') within $cw_control array ref. will be implicitly converted ...
-        # ... into sequence number!
+        my ( $cw_colormap, $guessl_pane ) = $g2w->conv_guess2colorseq(
+            $cw_control, $self->crossword->getGrid->getGuesses
+        );
         
-        my $grid_data = ( join '|', @{$cw_control} )."\n".( join '|', @{$cw_colormap} );
-        $self->render( text => '<pre>'.$grid_data.'</pre>' );
-        # # #
-        
+        $self->session(
+            home         => HOMEPAGE,
+            width        => $width,
+            num_of_cells => $height * $width,
+            guessl_pane  => $guessl_pane,
+            cw_colormap  => $cw_colormap,
+            cw_control   => $cw_control
+        );
+        $self->redirect_to(HOMEPAGE.'ui_handler');
     } else {
         $self->flash( error => "Wrong crossword width / height parameters!" ); # passing ...
         # ... value to the next http request.
         $self->redirect_to(HOMEPAGE);
+    }
+};
+
+get '/ui_handler' => sub {
+    my $self = shift;
+    
+    if ( $self->session('cw_control') ){ # Check if session variable exists!
+        my $cw_filled = [ ('') x $self->session->{num_of_cells} ];
+        
+        $self->flash( cw_filled => $cw_filled );
+        $self->redirect_to(HOMEPAGE.'crossword_ui');   
+    } else {
+        $self->redirect_to(HOMEPAGE);
+    }
+};
+
+post '/ui_handler' => sub {
+    my $self = shift;
+    
+    my $cw_filled;
+    $cw_filled = [ map { lc $_ } $self->req->param('filled_array') ];
+    
+    # Check correctness of user input
+    my $completed = 1;
+    for ( my $i = 0; $i < $self->session->{num_of_cells}; ++$i ){
+        if ( $cw_filled->[$i] eq $self->session->{cw_control}->[$i]){
+            if ( $self->session->{cw_colormap}->[$i] eq WRONG_CELL_BKGCOLOR ){
+                $self->session->{cw_colormap}->[$i] = '#000000';
+            }
+            next;
+        }
+        $completed = 0;
+        next if $cw_filled->[$i] eq '';
+        $self->session->{cw_colormap}->[$i] = WRONG_CELL_BKGCOLOR;
+    }
+    
+    if ( $completed ){
+        delete $self->session->{$_} foreach (
+            'home',
+            'width',
+            'num_of_cells',
+            'guessl_pane',
+            'cw_colormap',
+            'cw_control'
+        );
+        $self->session( completed => 1 );
+        $self->redirect_to(HOMEPAGE.'congrats');
+    } else {
+        $self->flash( cw_filled => $cw_filled );
+        $self->redirect_to(HOMEPAGE.'crossword_ui');
+    }
+};
+
+get '/crossword_ui' => sub {
+    my $self = shift;
+    
+    if ( $self->flash( 'cw_filled' ) ){ # Check if flash value exists!
+        $self->render( template => 'crossword_ui' );
+    } else {
+        $self->redirect_to(HOMEPAGE);
+    }
+};
+
+get '/congrats' => sub {
+    my $self = shift;
+    
+    if ( $self->session('completed') ){ # Check if session variable exists!
+        delete $self->session->{completed};
+        $self->render( template => 'congrats' );
+    } else {
+        $self->redirect_to(HOMEPAGE.'crossword_ui');
     }
 };
 
@@ -93,6 +145,10 @@ get '/*' => sub {
     my $self = shift;
     $self->redirect_to(HOMEPAGE);
 };
+
+# Session identifier:
+app->sessions->default_expiration( 5 * 60 );
+app->secret('zcroswordZzzzZzZzzzzZzzz');
 
 # Start mojo app as CGI script:
 app->start('cgi');
@@ -103,6 +159,15 @@ __DATA__
 
 @@ crossword_ui.html.ep
 % layout 'default';
+
+% my $home         = session 'home';
+% my $width        = session 'width';
+% my $num_of_cells = session 'num_of_cells';
+% my $guessl_pane  = session 'guessl_pane';
+% my $cw_colormap  = session 'cw_colormap';
+% my $cw_control   = session 'cw_control';
+% my $cw_filled    = flash   'cw_filled';
+
 <div class="wrapper">
     %= form_for $home.'ui_handler' => (method => 'post') => begin
         % for ( my $i = 0; $i < $num_of_cells + $width; ++$i ){
@@ -124,14 +189,41 @@ __DATA__
                         disabled => 'disabled', value => $i+1 # header row
                 %>
            % } else {
-                %= text_field 'filled_array', maxlength => 1, class => 'cell'
+                % if ( $cw_control->[$i-$width] =~ /^\d+$/ ){ # <- Guess
+                    <%= text_field 'filled_array', class => 'cell', readonly => 'readonly',
+                        style => 'background-color:'.$cw_colormap->[$i-$width],
+                        value => $cw_control->[$i-$width]
+                    %>
+                % } elsif ( $cw_control->[$i-$width] eq '%' ){ # <- Grave
+                    <%= text_field 'filled_array', class => 'cell', readonly => 'readonly',
+                        style => 'background-color:#000000',
+                        value => $cw_control->[$i-$width]
+                    %>
+                % } else { # <- Letter
+                    <%= text_field 'filled_array', maxlength => 1, class => 'cell',
+                        value => $cw_filled->[$i-$width],
+                        style => 'color:'.(($cw_colormap->[$i-$width] eq '' ) ?
+                            '#000000' : $cw_colormap->[$i-$width]);
+                    %>
+                % }
            % }
         % }
         </div>
         <span /><div><%= submit_button 'Check!', class => 'crossword_check' %></div>
     % end
 </div>
-
+<table class="guesslist_pane">
+    <tr><th class="guesslist_pane">N</th class="guesslist_pane"><th class="guesslist_pane">Arrow</th><th class="guesslist_pane">Description</th></tr>
+    % foreach my $guess ( @{$guessl_pane} ){
+        % foreach my $arrow (sort {$a cmp $b} keys %{$guess->{arrows}}){
+            <tr>
+               <td class="guesslist_pane" style="background-color:<%= $guess->{color} %>;" ><%= $guess->{seq} %></td>
+               <td class="guesslist_pane"><img src="public/<%= $arrow %>.png" /></td>
+               <td class="guesslist_pane"><%= $guess->{arrows}->{$arrow} %></td>
+            </tr>
+        % }
+    % }
+</table>
 
 @@ index.html.ep
 % layout 'default';
@@ -146,6 +238,12 @@ __DATA__
     <div>Width:  <%= text_field 'crossword_w', size => 2, maxlength => 2 %></div><br />
     <%= submit_button 'Generate!' %>
 % end
+
+
+@@ congrats.html.ep
+% layout 'default';
+<img src="public/congrats.gif" /><br />
+%= link_to 'Solve another crossword?' => 'index'
 
 
 @@ layouts/default.html.ep
