@@ -38,27 +38,35 @@ sub new{
 }
 
 sub conv_guess2colorseq{ # Be careful original array reference will be modified!
-    my $self = shift;
-    my $ar_r = shift;
+    my $self    = shift;
+    my $cw_ar_r = shift; # crossword data as ref to flat array.
+    my $gs_ar_r = shift; # array ref to guess objects data.
     
     my $max = 9 x $self->{max_len};
-    my $colormap = [ ('') x scalar @$ar_r ];
+    my $colormap = [ ('') x scalar @$cw_ar_r ];
+    my $guess_list_pane = [];
     
     my $seq = 0;
     my $color_i = 0;
+    my $guess_i = 0;
     my $max_color_i = @{$self->{colors}};
-    for ( my $i; $i < @$ar_r; ++$i ){
-        next if $ar_r->[$i] ne '#';
+    for ( my $i = 0; $i < @$cw_ar_r; ++$i ){
+        next if $cw_ar_r->[$i] ne '#';
         
         if ( $seq == $max ){
             $color_i = ( $color_i < $max_color_i ) ? $color_i+1 : 0;
             $seq = 0;
         }
         
-        $ar_r->[$i]     = ++$seq;
+        $cw_ar_r->[$i]  = ++$seq;
         $colormap->[$i] = $self->{colors}->[$color_i];
+        push @$guess_list_pane, {
+            seq    => $seq,
+            arrows => $gs_ar_r->[$guess_i++]->{arrows},
+            color  => $colormap->[$i]
+        };
     }
-    return $colormap;
+    return ( $colormap, $guess_list_pane );
 }
 
 1;
@@ -80,7 +88,9 @@ Guess object via CSS and HTML.
 
     use Guess2Web;
     
-    my $g2w = Guess2Web->new();
+    ...
+    
+    $g2w = Guess2Web->new();
     
     # or:  my $g2w = Guess2Web->new({
     #         max_len => 2,
@@ -88,16 +98,21 @@ Guess object via CSS and HTML.
     #      });
     ...
     
-    my $cw_control  = $self->crossword->getGrid->getAsFlatArrayRef;
-    my $cw_colormap = $g2w->conv_guess2colorseq($cw_control); 
+    $cw_control  = $self->crossword->getGrid->getAsFlatArrayRef;
+    ($cw_colormap, $guessl_pane ) = $g2w->conv_guess2colorseq(
+        $cw_control, $self->crossword->getGrid->getGuesses
+    );
     
 =head1 DESCRIPTION
 
-In the example above it is obvious that color information is returned as
-array reference. But you must be very careful when using 'conv_guess2colorseq'
-subroutine, because Guess objects data ('#') within passed array reference
-will be converted into fixed sequence number, i.e. passed array reference
-will be modified!
+In the example returned are:
+1) color information as array reference.
+2) array ref to hashes, containing Guess objected data plus guess sequence.
+
+You must be very careful when using 'conv_guess2colorseq' subroutine,
+because Guess object data ('#') within passed crossword flat data array ref
+will be converted into fixed sequence number, i.e. passed array reference will
+be modified!
 
 =head1 AUTHOR
 
